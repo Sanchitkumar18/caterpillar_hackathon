@@ -1,7 +1,8 @@
 """Operator Assistant reasoning core.
 Pipeline: intent detection -> context retrieval -> data retrieval ->
-(LLM reasoning OR deterministic responder) -> safety validation -> response.
-The LLM never invents application data; all facts come from context/tools."""
+(Airia RAG OR deterministic responder) -> safety validation -> response.
+Airia is used as an optional cloud enrichment layer when online;
+the on-device deterministic responder is always the offline fallback."""
 from __future__ import annotations
 import json
 import os
@@ -189,32 +190,54 @@ def deterministic_answer(text: str, lang: str, ctx: Dict[str, Any]) -> str:
         'मैं आपके कार्यों, समय अनुमान, मौसम प्रभाव, दिन के अनुकूलन, सुरक्षा स्थिति और शिफ्ट हैंडओवर में मदद कर सकता हूँ। पूछें: "मेरा अगला task क्या है?" या "क्या मौसम मेरे काम को प्रभावित करेगा?"')
 
 
-def _llm_reason(text: str, lang: str, ctx: Dict[str, Any], grounded: str) -> Optional[str]:
+AIRIA_PIPELINE_URL = "https://api.airia.ai/v2/PipelineExecution/f1e01d6b-49b8-49dc-80eb-1e2db46e6064"
+
+
+def _airia_reason(text: str, lang: str, ctx: Dict[str, Any]) -> Optional[str]:
+    """Send the operator query to the Airia RAG pipeline and return its answer.
+    Returns None on any failure so the caller falls back to the deterministic answer."""
     import httpx
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+    api_key = os.environ.get("AIRIA_API_KEY", "")
+    if not api_key:
+        return None
+    # Build a rich query that gives Airia the operator/machine context alongside
+    # the raw question so it can retrieve the most relevant documents.
     lang_name = LANG_NAME.get(lang, "English")
-    system = (
-        "You are the CAT Operator Copilot, a voice assistant for a construction machine operator.\n"
-        "Rules:\n"
-        "- Reply ONLY in %s. Keep it concise (2-4 sentences), calm and clear for someone near heavy machinery.\n"
-        "- Use ONLY the facts in the CONTEXT and GROUNDED_ANSWER below. NEVER invent tasks, times, weather, safety events, or machine procedures.\n"
-        "- For any machine repair / safety-critical procedure, do NOT give technical steps; advise following the official manual and contacting a supervisor.\n"
-        "- The GROUNDED_ANSWER already contains the correct data-derived facts; rephrase it naturally, do not contradict its numbers." % lang_name
+    digest = context_digest(ctx)
+    # context_digest returns machine as a flat string e.g. "CAT 320 · EXC001"
+    enriched_query = (
+        "[Operator: {op} | Machine: {machine} | Site: {site} | Language: {lang}]\n"
+        "Question: {q}"
+    ).format(
+        op=digest.get("operator", ""),
+        machine=digest.get("machine", ""),
+        site=digest.get("site", ""),
+        lang=lang_name,
+        q=text,
     )
-    payload = {
-        "model": model, "max_tokens": 400, "system": system,
-        "messages": [{"role": "user", "content": "CONTEXT:\n%s\n\nGROUNDED_ANSWER (authoritative facts):\n%s\n\nOPERATOR QUESTION:\n%s" % (
-            json.dumps(context_digest(ctx), indent=2, ensure_ascii=False), grounded, text)}],
-    }
+    payload = {"UserInput": enriched_query}
     try:
-        r = httpx.post("https://api.anthropic.com/v1/messages", json=payload, timeout=8, headers={
-            "content-type": "application/json", "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-            "anthropic-version": "2023-06-01",
-        })
+        r = httpx.post(
+            AIRIA_PIPELINE_URL,
+            json=payload,
+            timeout=30,
+            headers={
+                "Content-Type": "application/json",
+                "X-API-KEY": api_key,
+            },
+        )
         if r.status_code != 200:
             return None
         data = r.json()
-        out = (data.get("content") or [{}])[0].get("text", "").strip()
+        # Airia returns the answer in the top-level `result` or `output` field.
+        # Try both common shapes gracefully.
+        out = (
+            data.get("result")
+            or data.get("output")
+            or data.get("answer")
+            or data.get("response")
+            or ""
+        ).strip()
         return out or None
     except Exception:
         return None
@@ -236,13 +259,13 @@ def ask_assistant(text: str, language: str = "en-IN", operator_id: Optional[str]
     grounded = deterministic_answer(text, language, ctx)
     answer = grounded
     source = "on-device"  # deterministic, no network
-    # Cloud LLM is OPTIONAL enrichment — skipped entirely when offline so the
-    # assistant never blocks on a dead network.
-    if not offline and os.environ.get("ANTHROPIC_API_KEY"):
-        llm = _llm_reason(text, language, ctx, grounded)
-        if llm:
-            answer = llm
-            source = "llm"
+    # Airia RAG is OPTIONAL cloud enrichment — skipped entirely when offline
+    # so the assistant never blocks on a dead network.
+    if not offline and os.environ.get("AIRIA_API_KEY"):
+        airia = _airia_reason(text, language, ctx)
+        if airia:
+            answer = airia
+            source = "airia"
 
     return {
         "intent": intent, "language": language, "safetyCritical": False,
