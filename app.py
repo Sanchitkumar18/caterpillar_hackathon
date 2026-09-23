@@ -24,7 +24,7 @@ from copilot.services.safety import get_safety_status, get_operator_insights, ge
 from copilot.services.shift import get_shift_summary, generate_handover
 from copilot.services.assistant import ask_assistant
 from copilot.services.voice import get_voice_service, extract_note, voice_status
-from copilot.services import store, auth
+from copilot.services import store, auth, sync
 from copilot import data as db
 
 app = FastAPI(title="CAT Operator Copilot")
@@ -236,19 +236,52 @@ async def api_shift_post(request: Request):
         note = extract_note(body.get("text", ""), lang)
         if body.get("source"):
             note["source"] = body["source"]
-        store.add_note(sid, note)
-        return {"ok": True, "note": note, "notes": store.get_notes(sid)}
+        store.add_note(sid, note, operator_id=operator, machine_id=machine)
+        return {"ok": True, "note": note, "notes": store.get_notes(sid), "pending": sync.edge_db.pending_count()}
 
     if action == "end":
         import datetime
-        store.set_shift_state(sid, {"status": "Closed", "endedAt": datetime.datetime.utcnow().isoformat() + "Z"})
-        return {"ok": True, "status": "Closed", "handover": generate_handover(operator, machine, store.get_notes(sid))}
+        store.set_shift_state(sid, {"status": "Closed", "endedAt": datetime.datetime.utcnow().isoformat() + "Z"}, operator_id=operator)
+        return {"ok": True, "status": "Closed", "handover": generate_handover(operator, machine, store.get_notes(sid)), "pending": sync.edge_db.pending_count()}
 
     if action == "start":
-        store.set_shift_state(sid, {"status": "Active"})
+        store.set_shift_state(sid, {"status": "Active"}, operator_id=operator)
         return {"ok": True, "status": "Active"}
 
     return JSONResponse({"error": "unknown action"}, status_code=400)
+
+
+# ---------------- Store-and-forward sync (edge -> cloud) ----------------
+@app.get("/api/sync/status")
+def api_sync_status(request: Request):
+    if not identity(request):
+        return _unauthorized()
+    st = sync.status()
+    st["cloudReachable"] = sync.cloud_reachable()
+    return st
+
+
+@app.post("/api/sync/now")
+def api_sync_now(request: Request):
+    if not identity(request):
+        return _unauthorized()
+    return sync.sync_now()
+
+
+@app.on_event("startup")
+async def _start_autosync():
+    import asyncio
+
+    async def loop():
+        while True:
+            await asyncio.sleep(10)
+            try:
+                if sync.edge_db.pending_count() > 0 and await asyncio.to_thread(sync.cloud_reachable):
+                    await asyncio.to_thread(sync.sync_now)
+            except Exception:
+                pass
+
+    asyncio.create_task(loop())
 
 
 # Lightweight reachability probe. If this responds, the LOCAL copilot server is

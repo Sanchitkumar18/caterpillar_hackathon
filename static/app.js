@@ -332,6 +332,11 @@
           ${closed ? "" : `<button id="end-shift" class="btn btn-primary">End Shift</button>`}</div>
       </div>
 
+      <div id="sync-card" class="card2 mt4" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div><span class="label">Edge → Cloud Sync</span><div id="sync-line" class="muted" style="font-size:14px;margin-top:2px">Checking…</div></div>
+        <button id="sync-now" class="btn btn-ghost" style="padding:8px 16px">Sync now</button>
+      </div>
+
       <div class="metrics mt5">
         ${metric("Fuel Used", m.fuel + " L")}${metric("Idle Time", m.idle + " min")}${metric("Load Cycles", m.loadCycles)}
         ${metric("Safety Alerts", m.safetyAlerts, m.safetyAlerts > 0 ? "t-danger" : "")}${metric("Seatbelt Viol.", m.seatbeltViolations, m.seatbeltViolations > 0 ? "t-warn" : "")}
@@ -363,17 +368,15 @@
       const inp = $("#note-input"); const text = inp.value.trim(); if (!text) return;
       const body = { action: "note", text, language: session.language, source };
       inp.value = "";
-      if (isOffline()) {
-        // Queue locally; sync automatically when connectivity returns.
-        enqueue({ url: "/api/shift", body });
-        const list = $("#notes-list");
-        list.insertAdjacentHTML("afterbegin", `<div class="note"><p style="margin:0">${esc(text)}</p><div class="tags"><span class="pill b-warn">queued · will sync</span></div></div>`);
-        return;
-      }
+      // The edge server is LOCAL, so the note is saved on-device even with the
+      // internet down; it lands in the SQLite outbox and syncs to the cloud later.
       try {
         await fetch("/api/shift", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
         renderShift();
-      } catch (e) { enqueue({ url: "/api/shift", body }); renderShift(); }
+      } catch (e) {
+        // Only reached if even the local server is unreachable (UI on a separate box).
+        enqueue({ url: "/api/shift", body }); renderShift();
+      }
     };
     $("#note-add").addEventListener("click", () => addNote("text"));
     $("#note-input").addEventListener("keydown", e => { if (e.key === "Enter") addNote("text"); });
@@ -384,6 +387,14 @@
       rec.onresult = e => { $("#note-input").value = e.results[0][0].transcript; addNote("voice"); };
       rec.start();
     });
+    paintSync();
+    const syncBtn = $("#sync-now");
+    if (syncBtn) syncBtn.addEventListener("click", async () => {
+      syncBtn.textContent = "Syncing…"; syncBtn.disabled = true;
+      try { await api("/api/sync/now", { method: "POST" }); } catch (e) {}
+      await paintSync(); syncBtn.textContent = "Sync now"; syncBtn.disabled = false;
+    });
+
     const endBtn = $("#end-shift");
     if (endBtn) endBtn.addEventListener("click", async () => {
       const r = await api("/api/shift", { method: "POST", headers: { "content-type": "application/json" },
@@ -394,6 +405,17 @@
     });
   }
   function metric(l, v, tone) { return `<div class="metric"><div class="v ${tone || ""}">${v}</div><div class="l">${l}</div></div>`; }
+
+  async function paintSync() {
+    const line = $("#sync-line"); if (!line) return;
+    try {
+      const s = await api("/api/sync/status");
+      const when = s.lastSync ? new Date(s.lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never";
+      const cloud = s.cloudReachable ? `<span class="t-ok">cloud reachable</span>` : `<span class="t-warn">cloud unreachable — will retry</span>`;
+      const pend = s.pending > 0 ? `<span class="t-warn"><b>${s.pending}</b> change(s) pending</span>` : `<span class="t-ok">all synced ✓</span>`;
+      line.innerHTML = `${pend} · last synced ${when} · ${cloud} · <span class="muted">device ${esc(s.deviceId)}</span>`;
+    } catch (e) { line.textContent = "Sync status unavailable."; }
+  }
   function renderNotes(notes) {
     if (!notes.length) return `<p class="muted" style="font-size:14px">No notes yet. Add one by voice or text — it will feed the handover.</p>`;
     return notes.map(n => `<div class="note"><p style="margin:0">${esc(n.note)}</p><div class="tags">

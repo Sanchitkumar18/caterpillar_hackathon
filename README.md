@@ -64,6 +64,39 @@ Without the model, voice gracefully falls back to browser speech (online) or the
 text box; every other offline capability still works. To force a mode:
 `VOICE_PROVIDER=offline|google|browser`.
 
+### Store-and-forward sync (edge → cloud)
+
+Connectivity is treated as **intermittent, not a prerequisite**. Every
+locally-generated change (shift notes, shift start/end) is written as an
+**append-only event with a UUID** into a durable **SQLite outbox on the edge
+device**. A background worker pushes un-synced events to the **central cloud
+(PostgreSQL)** whenever it's reachable; ingest is **idempotent** (dedupe by
+`event_id`), so retries never duplicate and the design is conflict-free.
+
+```
+[ Operator UI ] ─▶ [ Edge app + SQLite outbox ] ─(store-and-forward)─▶ [ Cloud + PostgreSQL ]
+   PWA, on-device      always local, works offline     syncs when online     fleet event store
+```
+
+- **Edge app** (`app.py`, `:8000`) — the copilot; writes events to `data/edge.db`.
+- **Cloud service** (`cloud_app.py`, `:9000`) — PostgreSQL-backed; `/cloud/ingest`
+  (idempotent), `/cloud/events`, and a **live fleet dashboard** at `/`.
+- **Sync** (`copilot/services/sync.py`) — auto-flush every 10 s when the cloud is
+  reachable, plus a manual **"Sync now"** button on the Shift page which shows
+  `N pending · last synced HH:MM · cloud reachable · device ID`.
+
+**Run the full stack** (starts Postgres + cloud + edge):
+
+```bash
+bash scripts/run_all.sh
+# Operator Copilot: http://localhost:8000   Cloud dashboard: http://localhost:9000
+```
+
+**Demo the resilience:** open the cloud dashboard; add a shift note (it appears
+locally instantly); `pkill -f "uvicorn cloud_app"` to simulate the cloud going
+away; add more notes → they queue on the edge ("N pending"); restart the cloud →
+within 10 s the events flow into PostgreSQL and appear on the dashboard.
+
 ---
 
 ## Quick start
