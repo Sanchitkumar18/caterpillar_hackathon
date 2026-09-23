@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-09-23T09:35:31.558831Z",
+  "seed": 20250501,
+  "today": "2026-09-23",
+  "now": "2026-09-23T11:05:00",
+  "disclaimer": "All data is SYNTHETIC hackathon data. Values do not represent official Caterpillar operating thresholds, policies, or specifications.",
+  "date_range": {
+    "start": "2026-09-16",
+    "end": "2026-09-23"
+  },
+  "counts": {
+    "sites": 2,
+    "machines": 7,
+    "operators": 6,
+    "weather": 208,
+    "tasks": 282,
+    "telemetry": 282,
+    "shifts": 56,
+    "incidents": 137
+  }
+}

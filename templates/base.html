@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CAT Operator Copilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body data-page="{{ page }}">
+  <div class="layout">
+    <aside class="nav">
+      <div class="brand">
+        <div class="brand-mark">C</div>
+        <div>
+          <div class="brand-name">CAT Operator</div>
+          <div class="brand-sub">COPILOT</div>
+        </div>
+      </div>
+      <nav class="nav-links">
+        {% set icons = {'home':'⌂','assistant':'🎙','shift':'🗒','tasks':'▤','safety':'⚠','training':'🎓'} %}
+        {% set hrefs = {'home':'/','assistant':'/assistant','shift':'/shift','tasks':'/tasks','safety':'/safety','training':'/training'} %}
+        {% for key, label in pages.items() %}
+        <a href="{{ hrefs[key] }}" class="nav-link {% if key == page %}active{% endif %}">
+          <span class="nav-ico">{{ icons[key] }}</span><span>{{ label }}</span>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="nav-foot">
+        <label class="label">Demo Identity</label>
+        <select id="identity-select" class="select"></select>
+        <p class="disclaimer">{{ disclaimer }}</p>
+      </div>
+    </aside>
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+  {% block page_script %}{% endblock %}
+</body>
+</html>

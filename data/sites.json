@@ -1,0 +1,19 @@
+[
+  {
+    "site_id": "SITE-A",
+    "name": "North Ridge Quarry",
+    "zones": [
+      "Zone A",
+      "Zone B",
+      "Zone C"
+    ]
+  },
+  {
+    "site_id": "SITE-B",
+    "name": "Riverside Roadworks",
+    "zones": [
+      "Zone D",
+      "Zone E"
+    ]
+  }
+]

@@ -1,0 +1,68 @@
+[
+  {
+    "operator_id": "OP1001",
+    "operator_name": "Arjun Mehta",
+    "experience_years": 8,
+    "skill_level": "Expert",
+    "preferred_language": "en-IN",
+    "training_level": "Advanced",
+    "shift_type": "Day",
+    "safety": 0.97,
+    "speed": 1.0
+  },
+  {
+    "operator_id": "OP1002",
+    "operator_name": "Priya Nair",
+    "experience_years": 5,
+    "skill_level": "Intermediate",
+    "preferred_language": "hi-IN",
+    "training_level": "Standard",
+    "shift_type": "Day",
+    "safety": 0.9,
+    "speed": 1.08
+  },
+  {
+    "operator_id": "OP1003",
+    "operator_name": "Ravi Kumar",
+    "experience_years": 2,
+    "skill_level": "Beginner",
+    "preferred_language": "hi-IN",
+    "training_level": "Basic",
+    "shift_type": "Day",
+    "safety": 0.78,
+    "speed": 1.22
+  },
+  {
+    "operator_id": "OP1004",
+    "operator_name": "Sofia Alvarez",
+    "experience_years": 11,
+    "skill_level": "Expert",
+    "preferred_language": "es-ES",
+    "training_level": "Advanced",
+    "shift_type": "Day",
+    "safety": 0.98,
+    "speed": 0.96
+  },
+  {
+    "operator_id": "OP1005",
+    "operator_name": "Daniel Okafor",
+    "experience_years": 4,
+    "skill_level": "Intermediate",
+    "preferred_language": "en-IN",
+    "training_level": "Standard",
+    "shift_type": "Night",
+    "safety": 0.88,
+    "speed": 1.05
+  },
+  {
+    "operator_id": "OP1006",
+    "operator_name": "Meera Iyer",
+    "experience_years": 6,
+    "skill_level": "Intermediate",
+    "preferred_language": "ta-IN",
+    "training_level": "Standard",
+    "shift_type": "Day",
+    "safety": 0.92,
+    "speed": 1.02
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "machine_id": "EXC001",
+    "machine_type": "Excavator",
+    "machine_model": "CAT 320",
+    "base_hours": 1520.5,
+    "age": 2,
+    "site_id": "SITE-A"
+  },
+  {
+    "machine_id": "EXC002",
+    "machine_type": "Excavator",
+    "machine_model": "CAT 336",
+    "base_hours": 3110.0,
+    "age": 4,
+    "site_id": "SITE-A"
+  },
+  {
+    "machine_id": "EXC003",
+    "machine_type": "Excavator",
+    "machine_model": "CAT 320",
+    "base_hours": 780.2,
+    "age": 1,
+    "site_id": "SITE-B"
+  },
+  {
+    "machine_id": "LOD001",
+    "machine_type": "Wheel Loader",
+    "machine_model": "CAT 966",
+    "base_hours": 2450.7,
+    "age": 3,
+    "site_id": "SITE-A"
+  },
+  {
+    "machine_id": "LOD002",
+    "machine_type": "Wheel Loader",
+    "machine_model": "CAT 950",
+    "base_hours": 5300.1,
+    "age": 6,
+    "site_id": "SITE-B"
+  },
+  {
+    "machine_id": "DOZ001",
+    "machine_type": "Dozer",
+    "machine_model": "CAT D6",
+    "base_hours": 4020.4,
+    "age": 5,
+    "site_id": "SITE-A"
+  },
+  {
+    "machine_id": "DOZ002",
+    "machine_type": "Dozer",
+    "machine_model": "CAT D5",
+    "base_hours": 990.9,
+    "age": 1,
+    "site_id": "SITE-B"
+  }
+]
