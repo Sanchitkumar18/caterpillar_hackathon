@@ -2,7 +2,7 @@
  * Caches the app shell + static assets so the UI boots with no network, and
  * serves last-known API data when offline. Writes (POST) are handled by the
  * app's own offline queue, so they pass straight through here. */
-const CACHE = "cat-copilot-v2";
+const CACHE = "cat-copilot-v3";
 const PRECACHE = [
   "/login",
   "/static/styles.css",
@@ -27,16 +27,14 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  if (url.pathname.startsWith("/api/")) {
-    // Network-first, fall back to last cached response (stale data offline).
-    e.respondWith(
-      fetch(req).then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(req, cp)); return r; })
-        .catch(() => caches.match(req).then((m) => m || new Response(JSON.stringify({ offline: true }), { headers: { "content-type": "application/json" } })))
-    );
-  } else {
-    // Cache-first for shell + static; refresh cache in the background.
-    e.respondWith(
-      caches.match(req).then((m) => m || fetch(req).then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(req, cp)); return r; }))
-    );
-  }
+  // Network-first for everything (so code/data stay fresh when online), fall
+  // back to the cached copy when the network is unavailable — that fallback is
+  // what makes the app boot and run offline.
+  e.respondWith(
+    fetch(req)
+      .then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(req, cp)); return r; })
+      .catch(() => caches.match(req).then((m) => m || (url.pathname.startsWith("/api/")
+        ? new Response(JSON.stringify({ offline: true }), { headers: { "content-type": "application/json" } })
+        : Response.error())))
+  );
 });

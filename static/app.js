@@ -26,14 +26,29 @@
   function qs() { return "_=" + Date.now(); }
 
   // ---- connectivity + voice mode ----
-  const conn = { online: navigator.onLine, voice: null };
-  function isOffline() { return !navigator.onLine; }
+  // "Offline" in this product = no INTERNET. The local/edge server (this app's
+  // backend, where the reasoning + on-device STT run) stays reachable. A demo
+  // toggle simulates internet-down without cutting localhost.
+  const conn = { voice: null };
+  let forceOffline = false;
+  try { forceOffline = localStorage.getItem("cat-force-offline") === "1"; } catch (e) {}
+  function isOffline() { return !navigator.onLine || forceOffline; }
 
   async function initConnectivity() {
     try { const s = await fetch("/api/voice/status").then(r => r.json()); conn.voice = s; } catch (e) {}
     paintConn();
     window.addEventListener("online", paintConn);
     window.addEventListener("offline", paintConn);
+    const badge = $("#conn-badge");
+    if (badge) {
+      badge.style.cursor = "pointer";
+      badge.title = "Click to simulate internet down (edge/on-device mode)";
+      badge.addEventListener("click", () => {
+        forceOffline = !forceOffline;
+        try { localStorage.setItem("cat-force-offline", forceOffline ? "1" : "0"); } catch (e) {}
+        paintConn(); if (!isOffline()) flushQueue();
+      });
+    }
   }
   function paintConn() {
     const badge = $("#conn-badge"), text = $("#conn-text"), vm = $("#voice-mode");
@@ -41,7 +56,7 @@
     const off = isOffline();
     badge.classList.toggle("conn-online", !off);
     badge.classList.toggle("conn-offline", off);
-    if (text) text.textContent = off ? "Offline" : "Online";
+    if (text) text.textContent = off ? (forceOffline && navigator.onLine ? "Offline (demo)" : "Offline") : "Online";
     if (vm) {
       // Which voice engine will actually run right now.
       const hasVosk = conn.voice && conn.voice.offlineAvailable;
@@ -503,6 +518,12 @@
 
   async function sendMsg(text, meta) {
     if (!text || !text.trim()) return;
+    // Cancel any in-flight recording (e.g. user tapped a chip mid-record).
+    if (assistantState.state === "listening") {
+      clearTimeout(assistantState.autostop);
+      try { if (assistantState.mode === "browser") assistantState.rec.stop(); else assistantState.recorder.stop(); } catch (e) {}
+    }
+    const vi = $("#voice-info"); if (vi) vi.textContent = "";
     assistantState.msgs.push({ role: "operator", text, stt: meta && meta.onDeviceStt ? "on-device" : null });
     drawConv(); setState("processing");
     try {
