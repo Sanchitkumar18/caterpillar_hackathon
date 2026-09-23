@@ -23,7 +23,7 @@ from copilot.services.task_optimizer import optimize_day, what_if
 from copilot.services.safety import get_safety_status, get_operator_insights, get_recent_incidents
 from copilot.services.shift import get_shift_summary, generate_handover
 from copilot.services.assistant import ask_assistant
-from copilot.services.voice import get_voice_service, extract_note
+from copilot.services.voice import get_voice_service, extract_note, voice_status
 from copilot.services import store, auth
 from copilot import data as db
 
@@ -155,7 +155,8 @@ async def api_assistant(request: Request):
     text = (body.get("text") or "").strip()
     if not text:
         return JSONResponse({"error": "empty"}, status_code=400)
-    return ask_assistant(text, body.get("language", "en-IN"), ident["operator_id"], ident["machine_id"])
+    return ask_assistant(text, body.get("language", "en-IN"), ident["operator_id"],
+                         ident["machine_id"], offline=bool(body.get("offline")))
 
 
 @app.get("/api/tasks")
@@ -248,6 +249,19 @@ async def api_shift_post(request: Request):
         return {"ok": True, "status": "Active"}
 
     return JSONResponse({"error": "unknown action"}, status_code=400)
+
+
+# Lightweight reachability probe. If this responds, the LOCAL copilot server is
+# up (the app works) — independent of internet. The client separately checks
+# internet via navigator.onLine.
+@app.get("/api/health")
+def api_health():
+    return {"ok": True}
+
+
+@app.get("/api/voice/status")
+def api_voice_status():
+    return voice_status()
 
 
 @app.post("/api/voice/transcribe")

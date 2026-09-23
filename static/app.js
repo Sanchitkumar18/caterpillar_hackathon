@@ -24,6 +24,106 @@
   }
   // Identity now comes from the signed session cookie server-side; no params sent.
   function qs() { return "_=" + Date.now(); }
+
+  // ---- connectivity + voice mode ----
+  const conn = { online: navigator.onLine, voice: null };
+  function isOffline() { return !navigator.onLine; }
+
+  async function initConnectivity() {
+    try { const s = await fetch("/api/voice/status").then(r => r.json()); conn.voice = s; } catch (e) {}
+    paintConn();
+    window.addEventListener("online", paintConn);
+    window.addEventListener("offline", paintConn);
+  }
+  function paintConn() {
+    const badge = $("#conn-badge"), text = $("#conn-text"), vm = $("#voice-mode");
+    if (!badge) return;
+    const off = isOffline();
+    badge.classList.toggle("conn-online", !off);
+    badge.classList.toggle("conn-offline", off);
+    if (text) text.textContent = off ? "Offline" : "Online";
+    if (vm) {
+      // Which voice engine will actually run right now.
+      const hasVosk = conn.voice && conn.voice.offlineAvailable;
+      const mode = off ? (hasVosk ? "On-device voice" : "Text only")
+        : (hasVosk ? "On-device voice" : "Browser voice");
+      vm.textContent = "🎙 " + mode;
+    }
+    if (off) flushQueue(); // no-op offline, but harmless; real flush on 'online'
+  }
+  window.addEventListener("online", () => { paintConn(); flushQueue(); });
+
+  // ---- WAV recorder (16k mono) for the offline/on-device STT pipeline ----
+  function VoiceRecorder() {
+    let ac, source, proc, stream, chunks = [], sr = 16000;
+    this.start = async function () {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      sr = ac.sampleRate;
+      source = ac.createMediaStreamSource(stream);
+      proc = ac.createScriptProcessor(4096, 1, 1);
+      chunks = [];
+      proc.onaudioprocess = e => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      source.connect(proc); proc.connect(ac.destination);
+    };
+    this.stop = function () {
+      try { proc.disconnect(); source.disconnect(); ac.close(); stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      const flat = flatten(chunks);
+      const down = downsample(flat, sr, 16000);
+      return encodeWavBase64(down, 16000);
+    };
+  }
+  function flatten(chunks) {
+    let len = 0; chunks.forEach(c => len += c.length);
+    const out = new Float32Array(len); let o = 0;
+    chunks.forEach(c => { out.set(c, o); o += c.length; });
+    return out;
+  }
+  function downsample(buf, inRate, outRate) {
+    if (outRate >= inRate) return buf;
+    const ratio = inRate / outRate, outLen = Math.round(buf.length / ratio);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const start = Math.floor(i * ratio), end = Math.floor((i + 1) * ratio);
+      let sum = 0, n = 0;
+      for (let j = start; j < end && j < buf.length; j++) { sum += buf[j]; n++; }
+      out[i] = n ? sum / n : 0;
+    }
+    return out;
+  }
+  function encodeWavBase64(samples, rate) {
+    const buf = new ArrayBuffer(44 + samples.length * 2), view = new DataView(buf);
+    const ws = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    ws(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); ws(8, "WAVE"); ws(12, "fmt ");
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); ws(36, "data"); view.setUint32(40, samples.length * 2, true);
+    let o = 44;
+    for (let i = 0; i < samples.length; i++) { let s = Math.max(-1, Math.min(1, samples[i])); view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2; }
+    let bin = ""; const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+
+  // ---- offline write queue (shift notes) ----
+  function queueKey() { return "cat-offline-queue"; }
+  function enqueue(item) {
+    try { const q = JSON.parse(localStorage.getItem(queueKey()) || "[]"); q.push(item); localStorage.setItem(queueKey(), JSON.stringify(q)); } catch (e) {}
+  }
+  async function flushQueue() {
+    if (isOffline()) return;
+    let q = [];
+    try { q = JSON.parse(localStorage.getItem(queueKey()) || "[]"); } catch (e) { return; }
+    if (!q.length) return;
+    const remaining = [];
+    for (const item of q) {
+      try { const r = await fetch(item.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(item.body) }); if (!r.ok) remaining.push(item); }
+      catch (e) { remaining.push(item); }
+    }
+    try { localStorage.setItem(queueKey(), JSON.stringify(remaining)); } catch (e) {}
+    if (q.length !== remaining.length && document.body.dataset.page === "shift") renderShift();
+  }
+  function queuedCount() { try { return JSON.parse(localStorage.getItem(queueKey()) || "[]").length; } catch (e) { return 0; } }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   const root = () => $("#page-root");
 
@@ -246,9 +346,19 @@
 
     const addNote = async (source) => {
       const inp = $("#note-input"); const text = inp.value.trim(); if (!text) return;
-      await api("/api/shift", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "note", text, language: session.language, operatorId: session.operatorId, machineId: session.machineId, source }) });
-      inp.value = ""; renderShift();
+      const body = { action: "note", text, language: session.language, source };
+      inp.value = "";
+      if (isOffline()) {
+        // Queue locally; sync automatically when connectivity returns.
+        enqueue({ url: "/api/shift", body });
+        const list = $("#notes-list");
+        list.insertAdjacentHTML("afterbegin", `<div class="note"><p style="margin:0">${esc(text)}</p><div class="tags"><span class="pill b-warn">queued · will sync</span></div></div>`);
+        return;
+      }
+      try {
+        await fetch("/api/shift", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        renderShift();
+      } catch (e) { enqueue({ url: "/api/shift", body }); renderShift(); }
     };
     $("#note-add").addEventListener("click", () => addNote("text"));
     $("#note-input").addEventListener("keydown", e => { if (e.key === "Enter") addNote("text"); });
@@ -381,22 +491,24 @@
       return;
     }
     conv.innerHTML = assistantState.msgs.map(m => {
-      if (m.role === "operator") return `<div class="msg op"><div class="bubble op"><div class="who">You</div><p style="margin:0">${esc(m.text)}</p></div></div>`;
+      if (m.role === "operator") { const sttTag = m.stt ? `<span style="opacity:.6"> · 🎙 on-device</span>` : ""; return `<div class="msg op"><div class="bubble op"><div class="who">You${sttTag}</div><p style="margin:0">${esc(m.text)}</p></div></div>`; }
       const cls = m.safety ? "safety" : "as";
-      const tag = m.safety ? `<span class="t-danger"> ⚠ Safety guidance</span>` : m.source === "llm" ? `<span style="opacity:.6"> · AI</span>` : m.source === "deterministic" ? `<span style="opacity:.6"> · data</span>` : "";
+      const tag = m.safety ? `<span class="t-danger"> ⚠ Safety guidance</span>`
+        : m.source === "llm" ? `<span style="opacity:.6"> · cloud AI</span>`
+        : `<span style="opacity:.6"> · on-device${m.offline ? " · offline" : ""}</span>`;
       return `<div class="msg"><div class="bubble ${cls}"><div class="who">Assistant${tag}</div><p style="margin:0">${esc(m.text)}</p></div></div>`;
     }).join("");
     conv.scrollTop = conv.scrollHeight;
   }
 
-  async function sendMsg(text) {
+  async function sendMsg(text, meta) {
     if (!text || !text.trim()) return;
-    assistantState.msgs.push({ role: "operator", text });
+    assistantState.msgs.push({ role: "operator", text, stt: meta && meta.onDeviceStt ? "on-device" : null });
     drawConv(); setState("processing");
     try {
       const d = await api("/api/assistant", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, language: session.language, operatorId: session.operatorId, machineId: session.machineId }) });
-      assistantState.msgs.push({ role: "assistant", text: d.answer, source: d.source, safety: d.safetyCritical });
+        body: JSON.stringify({ text, language: session.language, offline: isOffline() }) });
+      assistantState.msgs.push({ role: "assistant", text: d.answer, source: d.source, safety: d.safetyCritical, offline: d.offline });
       drawConv();
       speak(d.answer, session.language);
     } catch (e) {
@@ -416,17 +528,56 @@
   }
 
   function micClick() {
-    if (assistantState.state === "listening") { try { assistantState.rec.stop(); } catch (e) {} setState("idle"); return; }
+    // Stop if already active.
+    if (assistantState.state === "listening") { return stopListening(); }
     if (assistantState.state === "responding") { try { window.speechSynthesis.cancel(); } catch (e) {} setState("idle"); return; }
+
+    const hasVosk = conn.voice && conn.voice.offlineAvailable;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { $("#voice-info").textContent = "Speech recognition isn't available in this browser — use the text box below."; return; }
-    const rec = new SR(); assistantState.rec = rec;
+
+    // Offline (or no browser STT): use the on-device Vosk pipeline via the backend.
+    if ((isOffline() || !SR) && hasVosk) { return startOnDeviceRecording(); }
+    // Offline with no engine at all: text only.
+    if (isOffline() && !hasVosk) { $("#voice-info").textContent = "Offline and no on-device voice model available — use the text box below."; return; }
+    // Online: browser Web Speech API (best accuracy).
+    if (!SR) { if (hasVosk) return startOnDeviceRecording(); $("#voice-info").textContent = "Speech recognition isn't available — use the text box below."; return; }
+    const rec = new SR(); assistantState.rec = rec; assistantState.mode = "browser";
     rec.lang = session.language; rec.interimResults = false; rec.continuous = false;
     setState("listening");
     rec.onresult = e => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; sendMsg(t); };
     rec.onerror = () => { setState("idle"); $("#voice-info").textContent = "Microphone error — use the text box below."; };
     rec.onend = () => { if (assistantState.state === "listening") setState("idle"); };
     rec.start();
+  }
+
+  async function startOnDeviceRecording() {
+    try {
+      const recorder = new VoiceRecorder();
+      assistantState.recorder = recorder; assistantState.mode = "vosk";
+      await recorder.start();
+      setState("listening");
+      $("#voice-info").textContent = "On-device recognition — recording… tap the mic again to stop.";
+      // Safety auto-stop after 10s.
+      assistantState.autostop = setTimeout(() => { if (assistantState.state === "listening") stopListening(); }, 10000);
+    } catch (e) {
+      setState("idle"); $("#voice-info").textContent = "Microphone unavailable — use the text box below.";
+    }
+  }
+
+  async function stopListening() {
+    clearTimeout(assistantState.autostop);
+    if (assistantState.mode === "browser") { try { assistantState.rec.stop(); } catch (e) {} setState("idle"); return; }
+    // Vosk path: encode + send to backend for on-device transcription.
+    setState("processing");
+    $("#voice-info").textContent = "";
+    let wavB64;
+    try { wavB64 = assistantState.recorder.stop(); } catch (e) { setState("idle"); return; }
+    try {
+      const d = await api("/api/voice/transcribe", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audio: wavB64, language: session.language }) });
+      if (d.transcript && d.transcript.trim()) { sendMsg(d.transcript, { onDeviceStt: true }); }
+      else { setState("idle"); $("#voice-info").textContent = "Didn't catch that — try again or type your question."; }
+    } catch (e) { setState("idle"); $("#voice-info").textContent = "Transcription failed — use the text box."; }
   }
 
   // ---- router ----
@@ -437,5 +588,7 @@
   }
 
   initIdentity();
+  initConnectivity();
+  flushQueue();
   renderPage();
 })();

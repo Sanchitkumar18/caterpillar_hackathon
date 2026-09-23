@@ -15,10 +15,29 @@ import re
 from typing import Optional, Dict, Any
 
 
+_BASE = os.path.join(os.path.dirname(__file__), "..", "..")
+VOSK_MODEL_PATH = os.environ.get("VOSK_MODEL_PATH", os.path.join(_BASE, "models", "vosk-model-small-en-us-0.15"))
+
+
+def vosk_available() -> bool:
+    try:
+        import vosk  # noqa: F401
+        return os.path.isdir(VOSK_MODEL_PATH)
+    except Exception:
+        return False
+
+
 def _provider_mode() -> str:
+    """Priority — an EXPLICIT VOICE_PROVIDER wins; otherwise prefer the offline,
+    on-device engine so the copilot keeps working with no internet, then cloud,
+    then the browser Web Speech API."""
     forced = os.environ.get("VOICE_PROVIDER", "auto")
-    if forced in ("google", "browser"):
+    if forced in ("google", "browser", "offline"):
+        if forced == "offline" and not vosk_available():
+            return "browser"
         return forced
+    if vosk_available():
+        return "offline"
     if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.environ.get("GOOGLE_CLOUD_PROJECT_ID"):
         return "google"
     return "browser"
@@ -67,13 +86,67 @@ class GoogleCloudVoiceProvider:
         return {"audioBase64": base64.b64encode(resp.audio_content).decode("ascii"), "mimeType": "audio/mpeg"}
 
 
+class OfflineVoiceProvider:
+    """On-device speech-to-text via Vosk. Runs fully offline — no internet, no
+    cloud, no API keys. This is the copilot's connectivity-independent voice path."""
+    name = "offline"
+    available = True
+    _model = None  # loaded once, reused
+
+    @classmethod
+    def _get_model(cls):
+        if cls._model is None:
+            from vosk import Model
+            cls._model = Model(VOSK_MODEL_PATH)
+        return cls._model
+
+    def transcribe_audio(self, audio_b64: str, language: str = "en-IN"):
+        import io
+        import json as _json
+        import wave
+        from vosk import KaldiRecognizer
+        raw = base64.b64decode(audio_b64)
+        wf = wave.open(io.BytesIO(raw), "rb")
+        rec = KaldiRecognizer(self._get_model(), wf.getframerate())
+        rec.SetWords(False)
+        text_parts = []
+        while True:
+            frames = wf.readframes(4000)
+            if not frames:
+                break
+            if rec.AcceptWaveform(frames):
+                text_parts.append(_json.loads(rec.Result()).get("text", ""))
+        text_parts.append(_json.loads(rec.FinalResult()).get("text", ""))
+        transcript = " ".join(p for p in text_parts if p).strip()
+        return {"transcript": transcript, "language": language}
+
+    def synthesize_speech(self, text: str, language: str):
+        # TTS stays on the client (browser speechSynthesis uses local, offline voices).
+        return None
+
+
 def get_voice_service():
-    if _provider_mode() == "google":
+    mode = _provider_mode()
+    if mode == "offline":
+        try:
+            return OfflineVoiceProvider()
+        except Exception:
+            return BrowserFallbackProvider()
+    if mode == "google":
         try:
             return GoogleCloudVoiceProvider()
         except Exception:
             return BrowserFallbackProvider()
     return BrowserFallbackProvider()
+
+
+def voice_status():
+    """Which STT engines are available, for the UI mode indicator."""
+    return {
+        "active": _provider_mode(),
+        "offlineAvailable": vosk_available(),
+        "cloudAvailable": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.environ.get("GOOGLE_CLOUD_PROJECT_ID")),
+    }
 
 
 # ---------- Structured note extraction ----------

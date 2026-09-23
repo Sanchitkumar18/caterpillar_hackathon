@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <meta name="theme-color" content="#131417" />
 </head>
 <body data-page="{{ page }}">
   <div class="layout">
@@ -17,6 +19,10 @@
           <div class="brand-name">CAT Operator</div>
           <div class="brand-sub">COPILOT</div>
         </div>
+      </div>
+      <div id="conn-badge" class="conn-badge conn-online" title="Connectivity">
+        <span class="conn-dot"></span><span id="conn-text">Online</span>
+        <span id="voice-mode" class="voice-mode"></span>
       </div>
       <nav class="nav-links">
         {% set icons = {'home':'⌂','assistant':'🎙','shift':'🗒','tasks':'▤','safety':'⚠','training':'🎓'} %}
@@ -43,6 +49,11 @@
       {% block content %}{% endblock %}
     </main>
   </div>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () { navigator.serviceWorker.register("/static/sw.js").catch(function () {}); });
+    }
+  </script>
   <script src="/static/app.js"></script>
   {% block page_script %}{% endblock %}
 </body>

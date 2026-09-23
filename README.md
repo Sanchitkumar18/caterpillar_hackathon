@@ -30,6 +30,42 @@ Everything runs with **zero external keys** — the demo is fully functional off
 
 ---
 
+## 🛰️ Offline-first (the USP)
+
+Construction sites often have **no connectivity**. CAT Operator Copilot is
+**edge-first**: the entire operator brain runs **on the device**, so it keeps
+working with the internet completely down.
+
+| Capability | Offline? | How |
+|-----------|:--------:|-----|
+| Dashboard, tasks, shift, safety, training | ✅ | All data + logic are local Python |
+| Task prediction, weather-aware optimizer, what-if | ✅ | Deterministic, on-device |
+| Assistant **reasoning** (intent, context, answers, Hindi) | ✅ | On-device responder over local data — no LLM needed |
+| Safety guardrail | ✅ | Local rule layer |
+| Voice **input** (speech-to-text) | ✅ | **On-device Vosk** model (`/api/voice/transcribe`) — no cloud |
+| Voice **output** (text-to-speech) | ✅ | Browser `speechSynthesis` (local voices) |
+| Shift notes while offline | ✅ | Queued in the browser, auto-synced on reconnect |
+| App shell loads with no network | ✅ | **PWA service worker** caches shell + last API data |
+| Cloud LLM phrasing, Google STT/TTS | ☁️ optional | Enrichment only — skipped cleanly when offline |
+
+**Voice engine priority** (`copilot/services/voice.py`): on-device Vosk →
+Google Cloud (if creds) → browser Web Speech. When offline, the mic records
+16 kHz WAV in the browser, POSTs it to the local server, and **Vosk transcribes
+it on-device** — then the local assistant answers. The sidebar shows a live
+**Online/Offline** badge and the active **voice mode**.
+
+Enable on-device voice (downloads a ~40 MB model, one time):
+
+```bash
+bash scripts/get_models.sh      # or: python -m pip install vosk && download the model
+```
+
+Without the model, voice gracefully falls back to browser speech (online) or the
+text box; every other offline capability still works. To force a mode:
+`VOICE_PROVIDER=offline|google|browser`.
+
+---
+
 ## Quick start
 
 ```bash

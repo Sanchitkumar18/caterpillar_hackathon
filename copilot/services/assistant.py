@@ -207,7 +207,7 @@ def _llm_reason(text: str, lang: str, ctx: Dict[str, Any], grounded: str) -> Opt
             json.dumps(context_digest(ctx), indent=2, ensure_ascii=False), grounded, text)}],
     }
     try:
-        r = httpx.post("https://api.anthropic.com/v1/messages", json=payload, timeout=20, headers={
+        r = httpx.post("https://api.anthropic.com/v1/messages", json=payload, timeout=8, headers={
             "content-type": "application/json", "x-api-key": os.environ["ANTHROPIC_API_KEY"],
             "anthropic-version": "2023-06-01",
         })
@@ -220,7 +220,8 @@ def _llm_reason(text: str, lang: str, ctx: Dict[str, Any], grounded: str) -> Opt
         return None
 
 
-def ask_assistant(text: str, language: str = "en-IN", operator_id: Optional[str] = None, machine_id: Optional[str] = None) -> Dict[str, Any]:
+def ask_assistant(text: str, language: str = "en-IN", operator_id: Optional[str] = None,
+                  machine_id: Optional[str] = None, offline: bool = False) -> Dict[str, Any]:
     ctx = build_context(operator_id or DEFAULT_OPERATOR, machine_id or DEFAULT_MACHINE)
     intent = detect_intent(text)
 
@@ -228,13 +229,16 @@ def ask_assistant(text: str, language: str = "en-IN", operator_id: Optional[str]
         return {
             "intent": "safety_critical", "language": language, "safetyCritical": True,
             "source": "safety-layer", "answer": SAFETY_RESPONSE.get(language, SAFETY_RESPONSE["en-IN"]),
-            "context": context_digest(ctx),
+            "context": context_digest(ctx), "offline": offline,
         }
 
+    # The reasoning core is fully on-device: intent + real data + templated answer.
     grounded = deterministic_answer(text, language, ctx)
     answer = grounded
-    source = "deterministic"
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    source = "on-device"  # deterministic, no network
+    # Cloud LLM is OPTIONAL enrichment — skipped entirely when offline so the
+    # assistant never blocks on a dead network.
+    if not offline and os.environ.get("ANTHROPIC_API_KEY"):
         llm = _llm_reason(text, language, ctx, grounded)
         if llm:
             answer = llm
@@ -242,5 +246,5 @@ def ask_assistant(text: str, language: str = "en-IN", operator_id: Optional[str]
 
     return {
         "intent": intent, "language": language, "safetyCritical": False,
-        "source": source, "answer": answer, "context": context_digest(ctx),
+        "source": source, "answer": answer, "context": context_digest(ctx), "offline": offline,
     }

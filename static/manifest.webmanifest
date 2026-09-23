@@ -1,0 +1,14 @@
+{
+  "name": "CAT Operator Copilot",
+  "short_name": "Copilot",
+  "description": "Edge-first operator assistant — works offline on site.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#131417",
+  "theme_color": "#131417",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
