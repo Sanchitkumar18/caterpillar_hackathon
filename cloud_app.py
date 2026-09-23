@@ -23,6 +23,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 DATABASE_URL = os.environ.get("CLOUD_DATABASE_URL", "postgresql://%s@localhost:5432/cat_cloud" % os.environ.get("USER", "postgres"))
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+# reference/master dataset -> (json file, primary-key function)
+REF_DATASETS = {
+    "sites": ("sites.json", lambda r: r["site_id"]),
+    "operators": ("operators.json", lambda r: r["operator_id"]),
+    "machines": ("machines.json", lambda r: r["machine_id"]),
+    "tasks": ("tasks.json", lambda r: r["task_id"]),
+    "telemetry": ("telemetry.json", lambda r: r["telemetry_id"]),
+    "shifts": ("shifts.json", lambda r: r["shift_id"]),
+    "incidents": ("incidents.json", lambda r: r["incident_id"]),
+    "weather": ("weather.json", lambda r: "%s|%s" % (r["site_id"], r["timestamp"])),
+}
 
 cloud = FastAPI(title="CAT Operator Copilot — Cloud")
 
@@ -51,7 +64,45 @@ def init_db():
         c.commit()
 
 
+def seed_reference(force: bool = False):
+    """Load reference/master data into the cloud DB (idempotent). Skips if already
+    present unless force=True. Runs automatically on startup so a fresh clone +
+    .env just works."""
+    try:
+        with _conn() as c, c.cursor() as cur:
+            for table, (fname, pk) in REF_DATASETS.items():
+                cur.execute("CREATE TABLE IF NOT EXISTS ref_%s (id TEXT PRIMARY KEY, data JSONB, loaded_at TIMESTAMPTZ DEFAULT now())" % table)
+            cur.execute("SELECT COUNT(*) FROM ref_operators")
+            already = cur.fetchone()[0]
+            if already and not force:
+                c.commit()
+                return {"seeded": False, "reason": "already populated"}
+            total = 0
+            for table, (fname, pk) in REF_DATASETS.items():
+                path = os.path.join(DATA_DIR, fname)
+                if not os.path.exists(path):
+                    continue
+                with open(path) as f:
+                    rows = json.load(f)
+                payload = [(pk(r), json.dumps(r)) for r in rows]
+                psycopg2.extras.execute_values(
+                    cur,
+                    "INSERT INTO ref_%s (id, data) VALUES %%s ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, loaded_at = now()" % table,
+                    payload)
+                total += len(rows)
+            c.commit()
+            return {"seeded": True, "rows": total}
+    except Exception as e:
+        return {"seeded": False, "error": str(e)}
+
+
 init_db()
+
+
+@cloud.on_event("startup")
+def _startup_seed():
+    if os.environ.get("AUTO_SEED", "1") != "0":
+        print("[cloud] reference seed:", seed_reference())
 
 
 @cloud.get("/cloud/health")

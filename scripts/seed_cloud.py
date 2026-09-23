@@ -13,6 +13,12 @@ from __future__ import annotations
 import json
 import os
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+except Exception:
+    pass
+
 import psycopg2
 import psycopg2.extras
 
