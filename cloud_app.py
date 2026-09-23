@@ -99,6 +99,21 @@ def events(limit: int = 100):
     return {"events": rows, "totals": agg}
 
 
+@cloud.get("/cloud/reference")
+def reference():
+    tables = ["operators", "machines", "weather", "tasks", "telemetry", "shifts", "incidents", "sites"]
+    counts = {}
+    with _conn() as c, c.cursor() as cur:
+        for t in tables:
+            try:
+                cur.execute("SELECT COUNT(*) FROM ref_%s" % t)
+                counts[t] = cur.fetchone()[0]
+            except Exception:
+                counts[t] = 0
+                c.rollback()
+    return {"reference": counts}
+
+
 @cloud.get("/", response_class=HTMLResponse)
 def dashboard():
     return CLOUD_HTML
@@ -132,6 +147,9 @@ tr:last-child td{border-bottom:none}
 <div class=stat><div class=n id=t-devices>0</div><div class=l>Edge devices</div></div>
 <div class=stat><div class=n id=t-ops>0</div><div class=l>Operators</div></div>
 </div>
+<div class=label style="color:var(--gray);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 8px">Reference data (master, synced from edge)</div>
+<div id=refstats class=stats></div>
+<div class=label style="color:var(--gray);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">Operator events (store-and-forward)</div>
 <table><thead><tr><th>Received</th><th>Type</th><th>Operator</th><th>Machine</th><th>Device</th><th>Detail</th></tr></thead>
 <tbody id=rows><tr><td colspan=6 class=mono>Waiting for synced events…</td></tr></tbody></table>
 </div>
@@ -151,5 +169,14 @@ async function tick(){
     document.getElementById('rows').innerHTML=rows||'<tr><td colspan=6 class=mono>Waiting for synced events…</td></tr>';
   }catch(e){}
 }
+async function refStats(){
+  try{
+    const d=await fetch('/cloud/reference').then(r=>r.json());
+    const r=d.reference||{};
+    document.getElementById('refstats').innerHTML=Object.keys(r).map(k=>
+      `<div class=stat><div class=n>${r[k]}</div><div class=l>${k}</div></div>`).join('');
+  }catch(e){}
+}
+refStats();
 tick(); setInterval(tick,2000);
 </script></body></html>"""

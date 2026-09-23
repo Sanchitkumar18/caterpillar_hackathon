@@ -13,6 +13,10 @@ export CLOUD_DATABASE_URL="postgresql://$(whoami)@localhost:5432/cat_cloud"
 # 2. Central cloud service (Postgres-backed) on :9000
 uvicorn cloud_app:cloud --port 9000 &
 CLOUD_PID=$!
+sleep 3
+
+# 2b. Seed reference/master data into the cloud DB (idempotent upsert)
+python scripts/seed_cloud.py || true
 
 # 3. Edge app (operator copilot) on :8000
 uvicorn app:app --port 8000 &
