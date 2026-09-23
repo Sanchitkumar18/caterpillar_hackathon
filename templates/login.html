@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign In · CAT Operator Copilot</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="brand-mark">C</div>
+        <div><div class="brand-name">CAT Operator</div><div class="brand-sub">COPILOT</div></div>
+      </div>
+      <p class="login-lead">Operator sign in</p>
+
+      <label class="label">Operator</label>
+      <select id="op-select" class="select" style="margin-bottom:14px">
+        {% for o in operators %}
+        <option value="{{ o.id }}" data-lang="{{ o.lang }}">{{ o.name }} — {{ o.id }} · {{ o.machine }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="label">4-digit PIN</label>
+      <div id="pin-dots" class="pin-dots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+
+      <div class="pinpad">
+        {% for n in [1,2,3,4,5,6,7,8,9] %}<button class="pin-key" data-k="{{ n }}">{{ n }}</button>{% endfor %}
+        <button class="pin-key pin-clear" data-k="clear">⌫</button>
+        <button class="pin-key" data-k="0">0</button>
+        <button class="pin-key pin-enter" data-k="enter">➜</button>
+      </div>
+
+      <div id="login-error" class="login-error"></div>
+      <p class="disclaimer" style="margin-top:18px">{{ disclaimer }}</p>
+      <p class="disclaimer">Demo PINs — Arjun/OP1001: 1234 · Priya/OP1002: 2468 · Ravi/OP1003: 1357 · Sofia/OP1004: 4321</p>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var pin = "";
+      var dots = document.querySelectorAll("#pin-dots span");
+      var errBox = document.getElementById("login-error");
+      function draw() { dots.forEach(function (d, i) { d.classList.toggle("filled", i < pin.length); }); }
+      function press(k) {
+        errBox.textContent = "";
+        if (k === "clear") pin = pin.slice(0, -1);
+        else if (k === "enter") return submit();
+        else if (pin.length < 4) pin += k;
+        if (pin.length === 4) setTimeout(submit, 120);
+        draw();
+      }
+      async function submit() {
+        var op = document.getElementById("op-select").value;
+        if (pin.length !== 4) { errBox.textContent = "Enter your 4-digit PIN."; return; }
+        try {
+          var r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ operatorId: op, pin: pin }) });
+          if (r.ok) {
+            var lang = document.querySelector("#op-select option:checked").getAttribute("data-lang");
+            try { var s = JSON.parse(localStorage.getItem("cat-session") || "{}"); s.language = lang; localStorage.setItem("cat-session", JSON.stringify(s)); } catch (e) {}
+            window.location.href = "/";
+          } else {
+            var d = await r.json(); errBox.textContent = d.error || "Sign in failed."; pin = ""; draw();
+          }
+        } catch (e) { errBox.textContent = "Network error."; }
+      }
+      document.querySelectorAll(".pin-key").forEach(function (b) { b.addEventListener("click", function () { press(b.getAttribute("data-k")); }); });
+      document.addEventListener("keydown", function (e) {
+        if (e.key >= "0" && e.key <= "9") press(e.key);
+        else if (e.key === "Backspace") press("clear");
+        else if (e.key === "Enter") press("enter");
+      });
+      draw();
+    })();
+  </script>
+</body>
+</html>

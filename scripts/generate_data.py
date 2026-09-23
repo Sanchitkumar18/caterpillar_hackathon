@@ -412,6 +412,28 @@ for date in DATE_LIST:
             })
 
 
+# ---------- Credentials (hashed operator PINs) ----------
+# Demo PINs (documented in README). Stored only as salted PBKDF2 hashes so the
+# dataset never contains plaintext credentials.
+import hashlib
+
+DEMO_PINS = {
+    "OP1001": "1234", "OP1002": "2468", "OP1003": "1357",
+    "OP1004": "4321", "OP1005": "5678", "OP1006": "8642",
+}
+
+
+def _hash_pin(pin, salt_hex):
+    return hashlib.pbkdf2_hmac("sha256", pin.encode(), bytes.fromhex(salt_hex), 100000).hex()
+
+
+credentials = {}
+for op in OPERATORS:
+    pin = DEMO_PINS[op["operator_id"]]
+    salt_hex = "".join("%02x" % randi(0, 255) for _ in range(16))
+    credentials[op["operator_id"]] = {"salt": salt_hex, "pin_hash": _hash_pin(pin, salt_hex)}
+
+
 # ---------- Write ----------
 def write(name, data):
     with open(os.path.join(OUT, name), "w") as f:
@@ -435,6 +457,7 @@ write("tasks.json", tasks)
 write("telemetry.json", telemetry)
 write("shifts.json", shifts)
 write("incidents.json", incidents)
+write("credentials.json", credentials)
 
 meta["counts"] = {
     "sites": len(SITES), "machines": len(MACHINES), "operators": len(OPERATORS),

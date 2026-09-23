@@ -13,18 +13,18 @@ except Exception:
     pass
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from copilot.services.context import build_context, get_today_tasks, DEFAULT_OPERATOR, DEFAULT_MACHINE
+from copilot.services.context import build_context, get_today_tasks
 from copilot.services.task_prediction import predict_for_task
 from copilot.services.task_optimizer import optimize_day, what_if
 from copilot.services.safety import get_safety_status, get_operator_insights, get_recent_incidents
 from copilot.services.shift import get_shift_summary, generate_handover
 from copilot.services.assistant import ask_assistant
 from copilot.services.voice import get_voice_service, extract_note
-from copilot.services import store
+from copilot.services import store, auth
 from copilot import data as db
 
 app = FastAPI(title="CAT Operator Copilot")
@@ -38,8 +38,71 @@ PAGES = {
 }
 
 
-# ---------------- Page routes ----------------
+# ---------------- Auth helpers ----------------
+def identity(request: Request) -> Optional[dict]:
+    """Resolve (operator_id, machine_id) from the signed session cookie."""
+    return auth.read_session(request.cookies.get(auth.COOKIE_NAME))
+
+
+def _unauthorized():
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+# ---------------- Login ----------------
+@app.get("/login")
+def login_page(request: Request):
+    if identity(request):
+        return RedirectResponse("/", status_code=302)
+    # Offer the operators who actually have a shift today as login hints.
+    today_ops = []
+    seen = set()
+    for s in db.shifts:
+        if s["shift_date"] == db.TODAY and s["operator_id"] not in seen:
+            seen.add(s["operator_id"])
+            op = db.get_operator(s["operator_id"])
+            today_ops.append({"id": op["operator_id"], "name": op["operator_name"],
+                              "machine": s["machine_id"], "lang": op["preferred_language"]})
+    return templates.TemplateResponse("login.html", {"request": request, "operators": today_ops,
+                                                     "disclaimer": db.meta["disclaimer"]})
+
+
+@app.post("/api/login")
+async def api_login(request: Request):
+    body = await request.json()
+    token, error = auth.authenticate((body.get("operatorId") or "").strip().upper(), (body.get("pin") or "").strip())
+    if error:
+        return JSONResponse({"error": error}, status_code=401)
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(auth.COOKIE_NAME, token, httponly=True, samesite="lax", max_age=auth.SESSION_TTL, path="/")
+    return resp
+
+
+@app.post("/api/logout")
+def api_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
+    op = db.get_operator(ident["operator_id"])
+    m = db.get_machine(ident["machine_id"])
+    return {
+        "operatorId": op["operator_id"], "operatorName": op["operator_name"],
+        "machineId": m["machine_id"], "machineModel": m["machine_model"],
+        "language": op["preferred_language"], "skillLevel": op["skill_level"],
+        "label": "%s · %s (%s)" % (op["operator_name"], m["machine_model"], m["machine_id"]),
+    }
+
+
+# ---------------- Page routes (auth-gated) ----------------
 def _page(request: Request, page: str):
+    if not identity(request):
+        return RedirectResponse("/login", status_code=302)
     return templates.TemplateResponse(page + ".html", {"request": request, "page": page, "pages": PAGES,
                                                        "disclaimer": db.meta["disclaimer"]})
 
@@ -74,25 +137,34 @@ def training_page(request: Request):
     return _page(request, "training")
 
 
-# ---------------- API routes ----------------
+# ---------------- API routes (identity from cookie) ----------------
 @app.get("/api/context")
-def api_context(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE):
-    return build_context(operator, machine)
+def api_context(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
+    return build_context(ident["operator_id"], ident["machine_id"])
 
 
 @app.post("/api/assistant")
 async def api_assistant(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
     body = await request.json()
     text = (body.get("text") or "").strip()
     if not text:
         return JSONResponse({"error": "empty"}, status_code=400)
-    return ask_assistant(text, body.get("language", "en-IN"), body.get("operatorId"), body.get("machineId"))
+    return ask_assistant(text, body.get("language", "en-IN"), ident["operator_id"], ident["machine_id"])
 
 
 @app.get("/api/tasks")
-def api_tasks(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE):
+def api_tasks(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
     tasks = []
-    for t in get_today_tasks(operator, machine):
+    for t in get_today_tasks(ident["operator_id"], ident["machine_id"]):
         tt = dict(t)
         tt["prediction"] = predict_for_task(t)
         tasks.append(tt)
@@ -100,20 +172,26 @@ def api_tasks(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE):
 
 
 @app.get("/api/optimize")
-def api_optimize(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE, rainHour: Optional[int] = None):
-    tasks = get_today_tasks(operator, machine)
-    m = db.get_machine(machine)
+def api_optimize(request: Request, rainHour: Optional[int] = None):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
+    tasks = get_today_tasks(ident["operator_id"], ident["machine_id"])
+    m = db.get_machine(ident["machine_id"])
     if rainHour is not None:
         return what_if(tasks, m["site_id"], int(rainHour))
     return optimize_day(tasks, m["site_id"])
 
 
 @app.get("/api/safety")
-def api_safety(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE):
+def api_safety(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
     return {
-        "status": get_safety_status(operator, machine),
-        "insights": get_operator_insights(operator),
-        "incidents": get_recent_incidents(operator, machine, 10),
+        "status": get_safety_status(ident["operator_id"], ident["machine_id"]),
+        "insights": get_operator_insights(ident["operator_id"]),
+        "incidents": get_recent_incidents(ident["operator_id"], ident["machine_id"], 10),
     }
 
 
@@ -122,7 +200,11 @@ def _shift_id(machine: str, date: str) -> str:
 
 
 @app.get("/api/shift")
-def api_shift_get(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHINE):
+def api_shift_get(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
+    operator, machine = ident["operator_id"], ident["machine_id"]
     summary = get_shift_summary(operator, machine)
     sid = summary["shift"]["shift_id"] if summary["shift"] else _shift_id(machine, db.TODAY)
     runtime_notes = store.get_notes(sid)
@@ -139,9 +221,11 @@ def api_shift_get(operator: str = DEFAULT_OPERATOR, machine: str = DEFAULT_MACHI
 
 @app.post("/api/shift")
 async def api_shift_post(request: Request):
+    ident = identity(request)
+    if not ident:
+        return _unauthorized()
     body = await request.json()
-    operator = body.get("operatorId") or DEFAULT_OPERATOR
-    machine = body.get("machineId") or DEFAULT_MACHINE
+    operator, machine = ident["operator_id"], ident["machine_id"]
     summary = get_shift_summary(operator, machine)
     sid = summary["shift"]["shift_id"] if summary["shift"] else _shift_id(machine, db.TODAY)
     action = body.get("action")
@@ -166,25 +250,10 @@ async def api_shift_post(request: Request):
     return JSONResponse({"error": "unknown action"}, status_code=400)
 
 
-@app.get("/api/operators")
-def api_operators():
-    pairs = []
-    for s in db.shifts:
-        if s["shift_date"] != db.TODAY:
-            continue
-        op = db.get_operator(s["operator_id"])
-        m = db.get_machine(s["machine_id"])
-        pairs.append({
-            "operatorId": s["operator_id"], "machineId": s["machine_id"],
-            "operatorName": op["operator_name"], "machineModel": m["machine_model"],
-            "language": op["preferred_language"],
-            "label": "%s · %s (%s)" % (op["operator_name"], m["machine_model"], m["machine_id"]),
-        })
-    return {"pairs": pairs, "operators": db.operators, "machines": db.machines}
-
-
 @app.post("/api/voice/transcribe")
 async def api_voice_transcribe(request: Request):
+    if not identity(request):
+        return _unauthorized()
     body = await request.json()
     service = get_voice_service()
     if service.name == "browser":
@@ -198,6 +267,8 @@ async def api_voice_transcribe(request: Request):
 
 @app.post("/api/voice/synthesize")
 async def api_voice_synthesize(request: Request):
+    if not identity(request):
+        return _unauthorized()
     body = await request.json()
     service = get_voice_service()
     if service.name == "browser":

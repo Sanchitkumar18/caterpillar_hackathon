@@ -19,28 +19,32 @@
   const $ = (sel, root) => (root || document).querySelector(sel);
   async function api(path, opts) {
     const r = await fetch(path, opts);
+    if (r.status === 401) { window.location.href = "/login"; throw new Error("unauthorized"); }
     return r.json();
   }
-  function qs() { return "operator=" + session.operatorId + "&machine=" + session.machineId; }
+  // Identity now comes from the signed session cookie server-side; no params sent.
+  function qs() { return "_=" + Date.now(); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   const root = () => $("#page-root");
 
-  // ---- identity switcher (nav) ----
+  // ---- logged-in operator badge (nav) ----
   async function initIdentity() {
-    const sel = $("#identity-select");
-    if (!sel) return;
-    const d = await api("/api/operators");
-    sel.innerHTML = d.pairs.map(p =>
-      `<option value="${p.operatorId}|${p.machineId}">${esc(p.label)}</option>`).join("");
-    sel.value = session.operatorId + "|" + session.machineId;
-    sel.addEventListener("change", () => {
-      const [op, m] = sel.value.split("|");
-      const pair = d.pairs.find(p => p.operatorId === op && p.machineId === m);
-      session.operatorId = op; session.machineId = m;
-      if (pair) session.language = pair.language;
-      saveSession();
-      renderPage();
+    const logout = $("#logout-btn");
+    if (logout) logout.addEventListener("click", async () => {
+      try { await fetch("/api/logout", { method: "POST" }); } catch (e) {}
+      window.location.href = "/login";
     });
+    const nameEl = $("#op-name");
+    if (!nameEl) return;
+    try {
+      const me = await api("/api/me");
+      session.operatorId = me.operatorId; session.machineId = me.machineId;
+      if (me.language && !localStorage.getItem("cat-lang-set")) session.language = me.language;
+      saveSession();
+      nameEl.textContent = me.operatorName;
+      $("#op-machine").textContent = me.machineModel + " · " + me.machineId;
+      $("#op-avatar").textContent = me.operatorName.split(" ").map(s => s[0]).join("").slice(0, 2);
+    } catch (e) { /* api() already redirected on 401 */ }
   }
 
   // ================= HOME =================
@@ -353,7 +357,7 @@
       <span>${c.currentTask ? esc(c.currentTask.task_type + " (" + c.currentTask.zone + ")") : "Between tasks"}</span><span>${esc(c.site.name)}</span><span>Shift: ${esc(c.operator.shift_type)}</span>`;
     $("#chips").innerHTML = SUGGESTIONS.map(s => `<button class="chip">${esc(s)}</button>`).join("");
     $("#chips").querySelectorAll(".chip").forEach(ch => ch.addEventListener("click", () => sendMsg(ch.textContent)));
-    $("#lang-sel").addEventListener("change", e => { session.language = e.target.value; saveSession(); });
+    $("#lang-sel").addEventListener("change", e => { session.language = e.target.value; saveSession(); try { localStorage.setItem("cat-lang-set", "1"); } catch (x) {} });
     $("#chat-form").addEventListener("submit", e => { e.preventDefault(); const v = $("#chat-input").value; $("#chat-input").value = ""; sendMsg(v); });
     $("#mic").addEventListener("click", micClick);
     drawConv();

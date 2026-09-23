@@ -43,9 +43,29 @@ uvicorn app:app --reload --port 8000  # run the app
 
 Open http://localhost:8000
 
-Use the **Demo Identity** switcher (bottom-left) to change operator/machine.
-The default demo identity is **Arjun Mehta · CAT 320 (EXC001)** at North Ridge Quarry,
-with a live in-progress shift ("now" = 11:05 on 2026-09-23).
+### Operator login
+
+The app is gated by **operator authentication**. On first load you're sent to
+`/login` — a tablet-style **PIN pad**. Pick an operator and enter their 4-digit PIN;
+identity (operator + assigned machine) is then carried in a **signed, HTTP-only
+session cookie**, and every API resolves who you are from that cookie server-side.
+
+Demo operators on shift today (2026-09-23), with PINs:
+
+| Operator | ID | Machine | PIN |
+|----------|------|---------|-----|
+| Arjun Mehta | OP1001 | CAT 320 (EXC001) | `1234` |
+| Priya Nair | OP1002 | CAT 336 (EXC002) | `2468` |
+| Ravi Kumar | OP1003 | CAT 966 (LOD001) | `1357` |
+| Sofia Alvarez | OP1004 | CAT D6 (DOZ001) | `4321` |
+
+Sign out from the sidebar. The default demo operator (**Arjun**) has a live
+in-progress shift ("now" = 11:05).
+
+**Security notes:** PINs are stored only as salted PBKDF2-SHA256 hashes
+(`data/credentials.json`); the cookie is HMAC-signed with `SESSION_SECRET` and
+cannot be forged; identity is never taken from client query params once logged in.
+Set a real `SESSION_SECRET` in production.
 
 ---
 

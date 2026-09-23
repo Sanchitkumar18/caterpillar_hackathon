@@ -28,8 +28,14 @@
         {% endfor %}
       </nav>
       <div class="nav-foot">
-        <label class="label">Demo Identity</label>
-        <select id="identity-select" class="select"></select>
+        <div id="op-badge" class="op-badge">
+          <div class="op-avatar" id="op-avatar">–</div>
+          <div style="min-width:0">
+            <div id="op-name" class="op-name">Loading…</div>
+            <div id="op-machine" class="op-machine"></div>
+          </div>
+        </div>
+        <button id="logout-btn" class="btn btn-ghost" style="width:100%;margin-top:10px;padding:8px">Sign out</button>
         <p class="disclaimer">{{ disclaimer }}</p>
       </div>
     </aside>
