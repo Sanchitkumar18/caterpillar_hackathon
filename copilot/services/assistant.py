@@ -14,9 +14,28 @@ from .safety import get_operator_insights
 from .shift import generate_handover
 
 # ---------- Safety validation layer ----------
-SAFETY_TRIGGERS = ["hydraulic", "leak", "fire", "smoke", "brake", "brakes", "repair", "fix engine",
-                   "override", "disable", "bypass", "electrical", "fuel leak", "tip over", "rollover",
-                   "injured", "injury", "accident", "stuck", "trapped", "spark", "overheat"]
+# We WANT the assistant to answer legitimate "how do I use / operate this feature"
+# questions (the core product vision — ask instead of re-reading the manual).
+# We only intercept with conservative guidance when the query signals a real
+# hazard, an active fault/repair, or an attempt to defeat a safety system.
+#
+# So a component word alone (e.g. "hydraulic") does NOT trigger safety — only
+# these categories do:
+
+# Immediate danger — always stop-and-defer, regardless of phrasing.
+HARD_EMERGENCY = ["leak", "fire", "smoke", "spark", "overheat", "burning", "burnt", "smell of",
+                  "explosion", "electrocut", "shock", "injured", "injury", "hurt", "bleeding",
+                  "accident", "rollover", "roll over", "tip over", "tipping", "tipped over",
+                  "trapped", "collapse", "gas leak", "on fire"]
+
+# Active fault / repair — don't invent repair or troubleshooting steps.
+FAULT_INDICATORS = ["not working", "won't start", "wont start", "won't move", "wont move",
+                    "broken", "malfunction", "failure", "failed", "stopped working", "fix ",
+                    "repair", "jammed", "error code", "warning light", "fault", "won't turn"]
+
+# Attempts to defeat / bypass safety systems — never assist.
+CIRCUMVENTION = ["override", "disable", "bypass", "defeat", "turn off the seatbelt",
+                 "disable the alarm", "ignore the alert"]
 
 SAFETY_RESPONSE = {
     "en-IN": "Stop operation and follow the machine's approved shutdown and safety procedure. Do not attempt a repair yourself or approach a pressurised or energised component. Refer to the machine's official manual and notify your supervisor or a qualified technician immediately. If anyone is at risk, prioritise personal safety and site emergency procedures.",
@@ -29,8 +48,15 @@ LANG_NAME = {"en-IN": "English", "hi-IN": "Hindi", "es-ES": "Spanish", "ta-IN": 
 
 
 def is_safety_critical(text: str) -> bool:
+    """True only for genuine hazards, active faults/repairs, or safety-system
+    circumvention. Plain 'how do I use/operate X' questions are NOT blocked so
+    they can be answered from the machine documentation."""
     t = text.lower()
-    return any(k in t for k in SAFETY_TRIGGERS)
+    return (
+        any(k in t for k in HARD_EMERGENCY)
+        or any(k in t for k in FAULT_INDICATORS)
+        or any(k in t for k in CIRCUMVENTION)
+    )
 
 
 def detect_intent(text: str) -> str:
