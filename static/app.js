@@ -531,6 +531,7 @@
       if (m.role === "operator") { const sttTag = m.stt ? `<span style="opacity:.6"> · 🎙 on-device</span>` : ""; return `<div class="msg op"><div class="bubble op"><div class="who">You${sttTag}</div><p style="margin:0">${esc(m.text)}</p></div></div>`; }
       const cls = m.safety ? "safety" : "as";
       const tag = m.safety ? `<span class="t-danger"> ⚠ Safety guidance</span>`
+        : m.source === "airia" ? `<span style="opacity:.6"> · Airia RAG</span>`
         : m.source === "llm" ? `<span style="opacity:.6"> · cloud AI</span>`
         : `<span style="opacity:.6"> · on-device${m.offline ? " · offline" : ""}</span>`;
       return `<div class="msg"><div class="bubble ${cls}"><div class="who">Assistant${tag}</div><p style="margin:0">${esc(m.text)}</p></div></div>`;
